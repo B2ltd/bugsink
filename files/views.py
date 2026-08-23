@@ -127,7 +127,7 @@ def requires_auth_token(view_function):
 
         if len(header_values) != 2:
             return JsonResponse(
-                {"error": "Expecting 'Authorization: Token abc123...' but got '%s'" % header_value}, status=401)
+                {"error": "Expecting 'Authorization: Bearer abc123...' but got '%s'" % header_value}, status=401)
 
         the_word_bearer, token = header_values
 

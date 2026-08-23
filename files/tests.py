@@ -79,7 +79,7 @@ class FilesTests(TransactionTestCase):
     def test_auth_overfull_header(self):
         response = self.client.get("/api/0/organizations/anyorg/chunk-upload/", headers={"Authorization": "Bearer a b"})
         self.assertEqual(401, response.status_code)
-        self.assertEqual({"error": "Expecting 'Authorization: Token abc123...' but got 'Bearer a b'"}, response.json())
+        self.assertEqual({"error": "Expecting 'Authorization: Bearer abc123...' but got 'Bearer a b'"}, response.json())
 
     def test_auth_wrong_token(self):
         response = self.client.get("/api/0/organizations/anyorg/chunk-upload/", headers={"Authorization": "Bearer xxx"})
