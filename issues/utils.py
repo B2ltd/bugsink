@@ -60,12 +60,12 @@ def get_exception_type_and_value_for_logmessage(data):
     """Use "Log Message" to classify non-exception events internally; their message is the useful display title."""
 
     message = strip(
-        get_path(data, "logentry", "message")
-        or get_path(data, "logentry", "formatted")
+        get_path(data, "logentry", "formatted")
+        or get_path(data, "logentry", "message")
 
         # top-level "message" (deprecated, but still used by some SDKs, with a dict as with "logentry")
-        or get_path(data, "message", "message")
         or get_path(data, "message", "formatted")
+        or get_path(data, "message", "message")
     )
 
     if not message and isinstance(data.get("message"), str):

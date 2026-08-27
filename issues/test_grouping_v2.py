@@ -52,6 +52,12 @@ class GroupingV2TestCase(DjangoTestCase):
         self.assertEqual("KeyError: exception message", first_key)
         self.assertEqual(first_key, second_key)
 
+    def test_logentry_message_takes_precedence(self):
+        self.assertEqual("Log Message: foo %s", get_grouping_key_for_data({"logentry": {
+            "message": "foo %s",
+            "formatted": "foo bar",
+        }}))
+
     def test_normalized_exception_values_have_stable_grouping_key(self):
         cases = [
             (
