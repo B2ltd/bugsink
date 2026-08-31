@@ -1,7 +1,10 @@
+from datetime import datetime, timedelta, timezone
+
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
 
+from bugsink.app_settings import get_settings, override_settings as override_bugsink_settings
 from bugsink.test_utils import TransactionTestCase25251 as TransactionTestCase
 from users.models import EmailVerification
 
@@ -21,6 +24,27 @@ class TeamInviteLinkTestCase(TransactionTestCase):
         self.team = Team.objects.create(name="Invite Team")
         TeamMembership.objects.create(team=self.team, user=self.admin, role=TeamRole.ADMIN, accepted=True)
         self.client.force_login(self.admin)
+
+    def test_expired_new_user_invite_token_is_rejected(self):
+        user = User.objects.create_user(
+            username="expired-team-invite@example.com",
+            email="expired-team-invite@example.com",
+            is_active=False,
+        )
+        TeamMembership.objects.create(team=self.team, user=user, accepted=False)
+        verification = EmailVerification.objects.create(user=user, email=user.email)
+        EmailVerification.objects.filter(pk=verification.pk).update(
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=61))
+
+        get_settings()
+        with override_bugsink_settings(USER_REGISTRATION_VERIFY_EMAIL_EXPIRY=60):
+            response = self.client.get(reverse("team_members_accept_new_user", kwargs={
+                "team_pk": self.team.pk,
+                "token": verification.token,
+            }))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(TeamMembership.objects.get(team=self.team, user=user).accepted)
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.dummy.EmailBackend")
     def test_invite_shows_link_on_members_page_when_email_backend_does_not_deliver(self):

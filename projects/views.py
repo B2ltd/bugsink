@@ -423,7 +423,8 @@ def project_members_accept_new_user(request, project_pk, token):
     # clean up expired tokens; doing this on every request is just fine, it saves us from having to run a cron
     # job-like thing
     EmailVerification.objects.filter(
-        created_at__lt=timezone.now() - timedelta(get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
+        created_at__lt=timezone.now() - timedelta(
+            seconds=get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
 
     try:
         verification = EmailVerification.objects.get(token=token)

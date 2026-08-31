@@ -1,16 +1,62 @@
+from datetime import timedelta
 from io import StringIO
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.urls import reverse
+from django.utils import timezone
 
-from bugsink.app_settings import get_settings
+from bugsink.app_settings import get_settings, override_settings
 from bugsink.test_utils import TransactionTestCase25251 as TransactionTestCase
 
 from .models import EmailVerification
 
 
 User = get_user_model()
+
+
+class EmailVerificationExpiryTestCase(TransactionTestCase):
+    def _verification_for(self, email, age_seconds):
+        user = User.objects.create_user(username=email, email=email, is_active=False)
+        verification = EmailVerification.objects.create(user=user, email=email)
+        EmailVerification.objects.filter(pk=verification.pk).update(
+            created_at=timezone.now() - timedelta(seconds=age_seconds))
+        return user, verification
+
+    def test_recent_token_can_confirm_email(self):
+        user, verification = self._verification_for("recent@example.com", 59)
+
+        get_settings()
+        with override_settings(USER_REGISTRATION_VERIFY_EMAIL_EXPIRY=60):
+            response = self.client.post(reverse("confirm_email", kwargs={"token": verification.token}))
+
+        self.assertEqual(response.status_code, 302)
+        user.refresh_from_db()
+        self.assertTrue(user.is_active)
+        self.assertEqual(self.client.session["_auth_user_id"], str(user.pk))
+        self.assertFalse(EmailVerification.objects.filter(pk=verification.pk).exists())
+
+    def test_expired_token_cannot_confirm_email(self):
+        user, verification = self._verification_for("expired-confirm@example.com", 61)
+
+        get_settings()
+        with override_settings(USER_REGISTRATION_VERIFY_EMAIL_EXPIRY=60):
+            response = self.client.get(reverse("confirm_email", kwargs={"token": verification.token}))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+
+    def test_expired_token_cannot_reset_password(self):
+        user, verification = self._verification_for("expired-reset@example.com", 61)
+
+        get_settings()
+        with override_settings(USER_REGISTRATION_VERIFY_EMAIL_EXPIRY=60):
+            response = self.client.get(reverse("reset_password", kwargs={"token": verification.token}))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(user.has_usable_password())
 
 
 class ResetPasswordRedirectTestCase(TransactionTestCase):
