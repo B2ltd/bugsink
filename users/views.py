@@ -114,7 +114,8 @@ def signup(request):
 def confirm_email(request, token=None):
     # clean up expired tokens; doing this on every request is just fine, it saves us from having to run a cron job-like
     EmailVerification.objects.filter(
-        created_at__lt=timezone.now() - timedelta(get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
+        created_at__lt=timezone.now() - timedelta(
+            seconds=get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
 
     try:
         verification = EmailVerification.objects.get(token=token)
@@ -191,7 +192,8 @@ def reset_password(request, token=None):
     # clean up expired tokens; doing this on every request is just fine, it saves us from having to run a cron
     # job-like thing
     EmailVerification.objects.filter(
-        created_at__lt=timezone.now() - timedelta(get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
+        created_at__lt=timezone.now() - timedelta(
+            seconds=get_settings().USER_REGISTRATION_VERIFY_EMAIL_EXPIRY)).delete()
 
     try:
         verification = EmailVerification.objects.get(token=token)
