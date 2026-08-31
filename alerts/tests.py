@@ -1,5 +1,6 @@
 from django.test import TestCase as DjangoTestCase
 from unittest.mock import patch, Mock
+import ipaddress
 import json
 import requests
 import socket
@@ -32,7 +33,7 @@ from .service_backends.telegram import (
     telegram_backend_send_test_message,
 )
 from .service_backends.custom import CustomBackendForm, custom_backend_send_test_message, custom_backend_send_alert
-from .service_backends.webhook_security import validate_webhook_url
+from .service_backends.webhook_security import _embedded_ipv4_addresses, validate_webhook_url
 from .tasks import send_new_issue_alert, send_regression_alert, send_unmute_alert, _get_users_for_email_alert
 from .views import DEBUG_CONTEXTS
 from bugsink.app_settings import override_settings as override_bugsink_settings
@@ -986,6 +987,20 @@ class TestMsTeamsBackend(DjangoTestCase):
         self.assertEqual(self.config.last_failure_error_type, "HTTPError")
 
 class TestWebhookSecurityValidation(DjangoTestCase):
+    def test_extracts_embedded_ipv4_addresses(self):
+        cases = {
+            "93.184.216.34": [],
+            "::ffff:127.0.0.1": ["127.0.0.1"],
+            "64:ff9b::a9fe:a9fe": ["169.254.169.254"],
+            "2002:c0a8:0101::1": ["192.168.1.1"],
+            "2001:0000:4136:e378:8000:63bf:3f57:fefe": ["65.54.227.120", "192.168.1.1"],
+        }
+
+        for address, expected in cases.items():
+            with self.subTest(address=address):
+                embedded = _embedded_ipv4_addresses(ipaddress.ip_address(address))
+                self.assertEqual(expected, [str(item) for item in embedded])
+
     def test_safe_post_does_not_re_resolve_after_validation(self):
         original_getaddrinfo = socket.getaddrinfo
         calls = []
@@ -1026,6 +1041,20 @@ class TestWebhookSecurityValidation(DjangoTestCase):
         with override_bugsink_settings(ALERTS_WEBHOOK_OUTBOUND_MODE="open"):
             with self.assertRaisesRegex(ValueError, "non-global IP address"):
                 validate_webhook_url("http://[::ffff:127.0.0.1]/hooks/example")
+
+    @patch("alerts.service_backends.webhook_security._resolve_ip_addresses")
+    def test_rejects_nat64_address_with_non_global_embedded_ipv4(self, mock_resolve):
+        for address in ["64:ff9b::127.0.0.1", "64:ff9b::10.0.0.1", "64:ff9b::169.254.169.254"]:
+            with self.subTest(address=address):
+                mock_resolve.return_value = {address}
+                with self.assertRaisesRegex(ValueError, "non-global IP address"):
+                    validate_webhook_url("https://hooks.example.com/webhook")
+
+    @patch("alerts.service_backends.webhook_security._resolve_ip_addresses")
+    def test_allows_nat64_address_with_global_embedded_ipv4(self, mock_resolve):
+        mock_resolve.return_value = {"64:ff9b::93.184.216.34"}
+
+        validate_webhook_url("https://hooks.example.com/webhook")
 
     @patch("alerts.service_backends.webhook_security._resolve_ip_addresses")
     def test_rejects_hostname_that_resolves_to_private_ip(self, mock_resolve):

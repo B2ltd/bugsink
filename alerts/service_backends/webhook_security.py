@@ -11,6 +11,8 @@ from urllib3.util import parse_url as parse_url_from_urllib3
 from bugsink.app_settings import get_settings
 
 
+_NAT64_WELL_KNOWN_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+
 _URL_ALLOWED_CHARACTERS = set(
     "abcdefghijklmnopqrstuvwxyz" +
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +  # ASCII letters
@@ -20,6 +22,23 @@ _URL_ALLOWED_CHARACTERS = set(
     "!$&'()*+,;=" +  # RFC 3986 sub-delims
     "%"  # Percent-encoding marker
 )
+
+
+def _embedded_ipv4_addresses(ip):
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return []
+
+    embedded = [ip.ipv4_mapped, ip.sixtofour]
+    if ip.teredo is not None:
+        embedded.extend(ip.teredo)
+    if ip in _NAT64_WELL_KNOWN_NETWORK:
+        embedded.append(ipaddress.IPv4Address(ip.packed[-4:]))
+
+    return [address for address in embedded if address is not None]
+
+
+def _is_global_ip(ip):
+    return ip.is_global and all(address.is_global for address in _embedded_ipv4_addresses(ip))
 
 
 def _parse_hosts_and_networks(entries, setting_name):
@@ -169,7 +188,7 @@ def validate_webhook_destination(hostname):
         )
 
     for ip in resolved_ips:
-        if settings.ALERTS_WEBHOOK_DENY_NON_GLOBAL and not ip.is_global:
+        if settings.ALERTS_WEBHOOK_DENY_NON_GLOBAL and not _is_global_ip(ip):
             raise ValueError(
                 f"Webhook target resolves to non-global IP address {ip}. "
                 "If this destination is intentional, add it to ALERTS_WEBHOOK_ALLOW_LIST."
