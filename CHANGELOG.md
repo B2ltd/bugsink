@@ -8,6 +8,23 @@ Some _very ancient_ migration files, long since squashed and replaced, have been
 you are running a pre-1.2.0 release and have not yet run migrations, you will need to upgrade to any release from 1.2.0
 to 2.5.0 and run migrations before upgrading to 2.5.1 or later. See #470.
 
+### Security
+
+Fix: enforce the configured lifetime for email verification, password-reset and new-user setup links.
+
+The lifetime setting is expressed in seconds but was interpreted as days, so unused links remained valid far beyond
+their configured expiry. Bugsink now expires them after the configured number of seconds. See:
+
+https://github.com/bugsink/bugsink/security/advisories/GHSA-4f45-qmjf-82cv
+
+Fix: reject webhook targets with non-global IPv4 addresses embedded in IPv6 destinations.
+
+On installations with NAT64 routing, a project admin could use a globally classified IPv6 address that translated to
+a private, loopback or link-local IPv4 destination. Bugsink now applies the global-address requirement to IPv4
+addresses embedded in standard IPv6 transition formats. See:
+
+https://github.com/bugsink/bugsink/security/advisories/GHSA-qxqr-25p3-664q
+
 ### Alert destinations
 
 Alerts can now be sent to Telegram, Microsoft Teams and custom webhook endpoints. Telegram supports channels, groups
