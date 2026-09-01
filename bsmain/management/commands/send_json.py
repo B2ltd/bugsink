@@ -23,7 +23,12 @@ class Command(BaseCommand):
     help = "Send raw events to a sentry-compatible server; events can be sources from the filesystem or your DB."
 
     def add_arguments(self, parser):
-        parser.add_argument("--dsn")
+        parser.add_argument("--dsn",
+        help="""The DSN to send events to. If not provided, SENTRY_DSN environment variable will be used. Examples:
+
+https://4cdff0be2c444c3887871f2ac6daacdf@dogfood.bugsink.com/13
+https://ec5673add0f05b15884dd1df2c2fd175@o4506173836623872.ingest.us.sentry.io/4512010927472640
+""")
         parser.add_argument("--valid-only", action="store_true")
         parser.add_argument("--fresh-id", action="store_true")
         parser.add_argument("--fresh-timestamp", action="store_true")
