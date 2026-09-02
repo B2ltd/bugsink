@@ -263,5 +263,5 @@ class SlackBackend(BaseWebhookBackend):
             alert_article,
             alert_reason,
             self.service_config.id,
-            **kwargs,
+            unmute_reason=kwargs.get("unmute_reason"),
         )

@@ -131,7 +131,8 @@ def custom_backend_send_test_message(webhook_url, project_name, display_name, se
 
 @shared_task
 def custom_backend_send_alert(
-    webhook_url, issue_id, state_description, alert_article, alert_reason, service_config_id, unmute_reason=None
+    webhook_url, issue_id, state_description, alert_article, alert_reason, service_config_id,
+    unmute_reason=None, absorbed_friendly_ids=None,
 ):
     issue = Issue.objects.get(id=issue_id)
 
@@ -146,6 +147,9 @@ def custom_backend_send_alert(
 
     if unmute_reason:
         data["unmute_reason"] = unmute_reason
+
+    if absorbed_friendly_ids:
+        data["absorbed_friendly_ids"] = list(absorbed_friendly_ids)
 
     try:
         result = CustomBackend.safe_post(
@@ -191,5 +195,6 @@ class CustomBackend(BaseWebhookBackend):
             alert_article,
             alert_reason,
             self.service_config.id,
-            **kwargs,
+            unmute_reason=kwargs.get("unmute_reason"),
+            absorbed_friendly_ids=kwargs.get("absorbed_friendly_ids"),
         )

@@ -741,6 +741,7 @@ class TurningPointKind(models.IntegerChoices):
     NEXT_MATERIALIZED = 10, _("Release info added")
 
     # ASSGINED = 10, "Assigned to user"   # perhaps later
+    MERGED = 20, _("Merged")
     MANUAL_ANNOTATION = 100, _("Manual annotation")
 
 

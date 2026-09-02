@@ -228,5 +228,5 @@ class MattermostBackend(BaseWebhookBackend):
             alert_reason,
             self.service_config.id,
             channel=config.get("channel"),
-            **kwargs,
+            unmute_reason=kwargs.get("unmute_reason"),
         )

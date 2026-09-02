@@ -129,6 +129,11 @@
                             An event was observed after the mute-deadline of {{ turningpoint.parsed_metadata.mute_for.unmute_after|date:"j M G:i T" }} and the issue was unmuted.
                         {% endif %}
 
+                    {% elif turningpoint.kind == 20 %} {# merged #}
+                        {% if turningpoint.parsed_metadata.absorbed %}
+                            Absorbed {% for fid in turningpoint.parsed_metadata.absorbed %}{{ fid }}{% if not forloop.last %}, {% endif %}{% endfor %}.
+                        {% endif %}
+
                     {% endif %}
 
                     {% if turningpoint.parsed_metadata.resolved_unconditionally %}
