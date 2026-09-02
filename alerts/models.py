@@ -47,6 +47,15 @@ class MessagingServiceConfig(models.Model):
 
     config = models.TextField(blank=False)
 
+    # Which alert reasons this destination should receive. Project-level alert_on_* remain outer kill-switches.
+    alert_on_new = models.BooleanField(default=True, help_text="Send when a new issue is first seen")
+    alert_on_regression = models.BooleanField(default=True, help_text="Send when a resolved issue regresses")
+    alert_on_unmute = models.BooleanField(
+        default=True, help_text="Send when a muted issue is unmuted by volume/time")
+    alert_on_merge = models.BooleanField(
+        default=False,
+        help_text="Send when issues are manually merged (useful to notify GitHub only after triage)")
+
     # Alert backend failure tracking
     last_failure_timestamp = models.DateTimeField(null=True, blank=True,
                                                   help_text="When the last failure occurred")
@@ -60,6 +69,19 @@ class MessagingServiceConfig(models.Model):
                                                help_text="Type of error that occurred (e.g., 'requests.HTTPError')")
     last_failure_error_message = models.TextField(null=True, blank=True,
                                                   help_text="Error message from the exception")
+
+    ALERT_REASON_FLAGS = {
+        "NEW": "alert_on_new",
+        "REGRESSED": "alert_on_regression",
+        "UNMUTED": "alert_on_unmute",
+        "MERGED": "alert_on_merge",
+    }
+
+    def should_send_alert(self, alert_reason):
+        flag = self.ALERT_REASON_FLAGS.get(alert_reason)
+        if flag is None:
+            return True  # unknown reasons still fire (forward-compatible)
+        return bool(getattr(self, flag))
 
     def get_backend(self):
         return get_alert_service_backend_class(self.kind)(self)

@@ -40,7 +40,14 @@ from .service_backends.custom import (
     build_request_headers,
 )
 from .service_backends.webhook_security import _embedded_ipv4_addresses, validate_webhook_url
-from .tasks import send_new_issue_alert, send_regression_alert, send_unmute_alert, _get_users_for_email_alert
+from .tasks import (
+    send_new_issue_alert,
+    send_regression_alert,
+    send_unmute_alert,
+    send_merge_alert,
+    _get_users_for_email_alert,
+    _send_alert,
+)
 from .views import DEBUG_CONTEXTS
 from bugsink.app_settings import override_settings as override_bugsink_settings
 
@@ -167,6 +174,64 @@ class TestAlertSending(DjangoTestCase):
         user.send_email_alerts = True
         user.save()
         self.assertEqual(list(_get_users_for_email_alert(issue)), [user])
+
+
+class TestAlertTriggerFilters(DjangoTestCase):
+    def setUp(self):
+        self.project = Project.objects.create(name="Test project")
+        self.issue, _ = get_or_create_issue(project=self.project)
+        create_event(project=self.project, issue=self.issue)
+
+    def _service(self, **flags):
+        defaults = {
+            "project": self.project,
+            "display_name": "Custom",
+            "kind": "custom",
+            "config": json.dumps({"webhook_url": "https://hooks.example.com/test"}),
+            "alert_on_new": True,
+            "alert_on_regression": True,
+            "alert_on_unmute": True,
+            "alert_on_merge": False,
+        }
+        defaults.update(flags)
+        return MessagingServiceConfig.objects.create(**defaults)
+
+    def test_should_send_alert_maps_reasons(self):
+        service = self._service(alert_on_new=False, alert_on_merge=True)
+        self.assertFalse(service.should_send_alert("NEW"))
+        self.assertTrue(service.should_send_alert("REGRESSED"))
+        self.assertTrue(service.should_send_alert("MERGED"))
+
+    @patch.object(MessagingServiceConfig, "get_backend")
+    def test_send_alert_skips_disabled_new(self, mock_get_backend):
+        backend = Mock()
+        mock_get_backend.return_value = backend
+        self._service(alert_on_new=False)
+
+        _send_alert(self.issue.id, "New issue", "a", "NEW")
+
+        backend.send_alert.assert_not_called()
+
+    @patch.object(MessagingServiceConfig, "get_backend")
+    def test_send_merge_alert_only_when_enabled(self, mock_get_backend):
+        backend = Mock()
+        mock_get_backend.return_value = backend
+        self._service(alert_on_merge=True)
+
+        send_merge_alert(self.issue.id, absorbed_friendly_ids=["PROJ-1"])
+
+        backend.send_alert.assert_called_once()
+        self.assertEqual(backend.send_alert.call_args.args[3], "MERGED")
+
+    @patch.object(MessagingServiceConfig, "get_backend")
+    def test_send_merge_alert_skipped_by_default(self, mock_get_backend):
+        backend = Mock()
+        mock_get_backend.return_value = backend
+        self._service()  # alert_on_merge defaults False
+
+        send_merge_alert(self.issue.id)
+
+        backend.send_alert.assert_not_called()
 
 
 class TestSlackBackendErrorHandling(DjangoTestCase):

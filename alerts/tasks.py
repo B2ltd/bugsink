@@ -67,6 +67,17 @@ def send_unmute_alert(issue_id, unmute_reason):
     _send_alert(issue_id, "Unmuted issue", "an", "UNMUTED", unmute_reason=unmute_reason)
 
 
+@shared_task
+def send_merge_alert(issue_id, absorbed_friendly_ids=None):
+    _send_alert(
+        issue_id,
+        "Merged issue",
+        "a",
+        "MERGED",
+        absorbed_friendly_ids=absorbed_friendly_ids or [],
+    )
+
+
 def _send_alert(issue_id, state_description, alert_article, alert_reason, **kwargs):
     # NOTE: as it stands, there is a bit of asymmetry here: _send_alert is always called in delayed fashion; it delays
     # some work itself (message backends) though not all (emails). I kept it like this to be able to add functionality
@@ -80,6 +91,8 @@ def _send_alert(issue_id, state_description, alert_article, alert_reason, **kwar
     issue = Issue.objects.get(id=issue_id)
 
     for service in issue.project.service_configs.all():
+        if not service.should_send_alert(alert_reason):
+            continue
         service_backend = service.get_backend()
         service_backend.send_alert(issue_id, state_description, alert_article, alert_reason, **kwargs)
 
