@@ -77,6 +77,9 @@ class Issue(models.Model):
     unmute_after = models.DateTimeField(blank=True, null=True)
     next_unmute_check = models.PositiveIntegerField(null=False, default=0)
 
+    # Free-form JSON for integrations (e.g. opaque keys that are not external issue links).
+    metadata = models.TextField(blank=False, null=False, default="{}")
+
     def save(self, *args, **kwargs):
         if self.digest_order is None:
             # testing-only; in production this should never happen and instead have been done in the ingest view.
@@ -84,6 +87,27 @@ class Issue(models.Model):
                 models.Max("digest_order"))["digest_order__max"]
             self.digest_order = max_current + 1 if max_current is not None else 1
         super().save(*args, **kwargs)
+
+    def parsed_metadata(self):
+        if not hasattr(self, "_parsed_metadata"):
+            try:
+                self._parsed_metadata = json.loads(self.metadata or "{}")
+            except (TypeError, json.JSONDecodeError):
+                self._parsed_metadata = {}
+            if not isinstance(self._parsed_metadata, dict):
+                self._parsed_metadata = {}
+        return self._parsed_metadata
+
+    def set_metadata(self, data, *, merge=True):
+        """Replace or shallow-merge JSON metadata; clears the parsed cache."""
+        assert_(isinstance(data, dict), "metadata must be an object")
+        if merge:
+            current = self.parsed_metadata()
+            current.update(data)
+            data = current
+        self.metadata = json.dumps(data)
+        if hasattr(self, "_parsed_metadata"):
+            del self._parsed_metadata
 
     def delete_deferred(self):
         """Marks the issue as deleted, and schedules deletion of all related objects"""
@@ -741,6 +765,7 @@ class TurningPointKind(models.IntegerChoices):
     NEXT_MATERIALIZED = 10, _("Release info added")
 
     # ASSGINED = 10, "Assigned to user"   # perhaps later
+    MERGED = 20, _("Merged")
     MANUAL_ANNOTATION = 100, _("Manual annotation")
 
 
@@ -776,4 +801,49 @@ class TurningPoint(models.Model):
             if "mute_for" in self._parsed_metadata and "unmute_after" in self._parsed_metadata["mute_for"]:
                 self._parsed_metadata["mute_for"]["unmute_after"] = \
                     parse_timestamp(self._parsed_metadata["mute_for"]["unmute_after"])
+        return self._parsed_metadata
+
+
+class ExternalIssue(models.Model):
+    """Link from a Bugsink issue to an external tracker (GitHub, Jira, …).
+
+    Shape mirrors Sentry's external-issue payload: webUrl / project / identifier, plus optional provider and metadata.
+    """
+
+    project = models.ForeignKey("projects.Project", blank=False, null=False, on_delete=models.DO_NOTHING)
+    issue = models.ForeignKey(
+        Issue, blank=False, null=False, on_delete=models.DO_NOTHING, related_name="external_issues")
+
+    provider = models.CharField(max_length=64, blank=False, null=False, default="github")
+    # External project slug/name (Sentry's `project` field on external issues).
+    external_project = models.CharField(max_length=256, blank=True, null=False, default="")
+    identifier = models.CharField(max_length=256, blank=False, null=False)
+    web_url = models.URLField(max_length=1024, blank=False, null=False)
+    display_name = models.CharField(max_length=512, blank=True, null=False, default="")
+    metadata = models.TextField(blank=False, null=False, default="{}")  # json object
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("issue", "provider", "identifier")]
+        ordering = ["provider", "identifier"]
+
+    def __str__(self):
+        return self.get_display_name()
+
+    def get_display_name(self):
+        if self.display_name:
+            return self.display_name
+        if self.external_project:
+            return f"{self.external_project}#{self.identifier}"
+        return f"{self.provider}:{self.identifier}"
+
+    def parsed_metadata(self):
+        if not hasattr(self, "_parsed_metadata"):
+            try:
+                self._parsed_metadata = json.loads(self.metadata or "{}")
+            except (TypeError, json.JSONDecodeError):
+                self._parsed_metadata = {}
+            if not isinstance(self._parsed_metadata, dict):
+                self._parsed_metadata = {}
         return self._parsed_metadata

@@ -9,9 +9,13 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from bugsink.api_mixins import AtomicRequestMixin
 from bugsink.utils import assert_
 
-from .models import Issue, IssueStateManager, TurningPoint, apply_issue_action, issue_lookup_kwargs
+from .merge import kickoff_merge
+from .models import ExternalIssue, Issue, IssueStateManager, TurningPoint, apply_issue_action, issue_lookup_kwargs
 from .serializers import (
+    ExternalIssueSerializer,
     IssueCommentSerializer,
+    IssueMergeSerializer,
+    IssueMetadataSerializer,
     IssueMuteForSerializer,
     IssueMuteUntilSerializer,
     IssueSerializer,
@@ -67,10 +71,10 @@ class IssuesCursorPagination(CursorPagination):
 
 
 class IssueViewSet(AtomicRequestMixin, viewsets.ReadOnlyModelViewSet):
-    queryset = Issue.objects.filter(is_deleted=False).select_related("project")  # hide soft-deleted; router basename
+    queryset = Issue.objects.filter(is_deleted=False).select_related("project").prefetch_related("external_issues")
     serializer_class = IssueSerializer
     pagination_class = IssuesCursorPagination
-    http_method_names = ["get", "post", "delete", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
         return self.queryset
@@ -292,6 +296,107 @@ class IssueViewSet(AtomicRequestMixin, viewsets.ReadOnlyModelViewSet):
             raise ValidationError({"detail": "Issue is not muted."})
 
         return self._apply_issue_action(issue, "unmute")
+
+    @extend_schema(
+        summary="Merge issues into this issue",
+        description=(
+            "Absorb `children` into this issue (the parent). Same idea as Sentry's merge: "
+            "future events matching any absorbed grouping land on the parent."
+        ),
+        request=IssueMergeSerializer,
+        responses=IssueSerializer,
+    )
+    @action(detail=True, methods=["post"])
+    def merge(self, request, pk=None):
+        parent = self.get_object()
+        serializer = IssueMergeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        children = []
+        for child_ref in serializer.validated_data["children"]:
+            try:
+                child = Issue.objects.filter(is_deleted=False).get(**issue_lookup_kwargs(child_ref))
+            except Issue.DoesNotExist as exc:
+                raise ValidationError({"children": [f"Issue not found: {child_ref}"]}) from exc
+            children.append(child)
+
+        try:
+            kickoff_merge(parent, children, user=None)
+        except AssertionError as exc:
+            raise ValidationError({"detail": str(exc) or "Invalid merge."}) from exc
+
+        parent.refresh_from_db()
+        data = self.get_serializer(parent).data
+        data["merge"] = {
+            "parent": str(parent.id),
+            "children": [str(child.id) for child in children],
+        }
+        return Response(data, status=status.HTTP_202_ACCEPTED)
+
+    @extend_schema(
+        summary="Update issue metadata",
+        description="Shallow-merge (default) or replace free-form JSON metadata on this issue.",
+        request=IssueMetadataSerializer,
+        responses=IssueSerializer,
+    )
+    @action(detail=True, methods=["patch"], url_path="metadata")
+    def update_metadata(self, request, pk=None):
+        issue = self.get_object()
+        serializer = IssueMetadataSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        issue.set_metadata(
+            serializer.validated_data["metadata"],
+            merge=serializer.validated_data.get("merge", True),
+        )
+        issue.save(update_fields=["metadata"])
+        return self._action_response(issue)
+
+
+class IssueExternalIssueViewSet(
+    AtomicRequestMixin,
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    """CRUD for Sentry-shaped external issue links (GitHub URL, etc.)."""
+
+    queryset = ExternalIssue.objects.select_related("issue", "project")
+    serializer_class = ExternalIssueSerializer
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = self.queryset
+        issue_ref = self.request.query_params.get("issue")
+        if self.action == "list":
+            if not issue_ref:
+                raise ValidationError({"issue": ["This field is required."]})
+            try:
+                issue = Issue.objects.filter(is_deleted=False).get(**issue_lookup_kwargs(issue_ref))
+            except Issue.DoesNotExist as exc:
+                raise ValidationError({"issue": ["Issue not found."]}) from exc
+            return qs.filter(issue=issue)
+        return qs
+
+    @extend_schema(
+        summary="List external issues",
+        parameters=[
+            OpenApiParameter(
+                name="issue",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="Issue UUID or friendly ID.",
+            ),
+        ],
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        instance.delete()
 
 
 class IssueCommentViewSet(AtomicRequestMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):

@@ -225,6 +225,36 @@
                 </div>
                 {% endif %}
 
+                {% if issue.external_issues.all %}
+                <div class="mb-4">
+                    <div class="text-sm font-bold text-slate-500 dark:text-slate-300">{% translate "External issues" %}</div>
+                    <ul class="list-none space-y-1">
+                    {% for link in issue.external_issues.all %}
+                        <li>
+                            <a href="{{ link.web_url }}" class="text-cyan-500 dark:text-cyan-300 underline break-all" target="_blank" rel="noopener noreferrer">{{ link.get_display_name }}</a>
+                            <span class="text-xs text-slate-400">({{ link.provider }})</span>
+                        </li>
+                    {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+
+                {% with meta=issue.parsed_metadata %}
+                {% if meta %}
+                <div class="mb-4">
+                    <div class="text-sm font-bold text-slate-500 dark:text-slate-300">{% translate "Metadata" %}</div>
+                    <dl class="text-sm">
+                    {% for key, value in meta.items %}
+                        <div class="mb-1">
+                            <dt class="inline font-mono text-slate-500 dark:text-slate-400">{{ key }}:</dt>
+                            <dd class="inline break-all">{{ value }}</dd>
+                        </div>
+                    {% endfor %}
+                    </dl>
+                </div>
+                {% endif %}
+                {% endwith %}
+
             </div>
         </div>
 

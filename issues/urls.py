@@ -3,7 +3,7 @@ from django.urls import path, register_converter
 from .views import (
     issue_list, global_issue_list, issue_event_stacktrace, issue_event_details, issue_event_list, issue_history,
     issue_grouping, issue_event_breadcrumbs, event_by_id, history_comment_new, history_comment_edit,
-    history_comment_delete, issue_tags, issue_markdown)
+    history_comment_delete, issue_tags, issue_markdown, issue_merge)
 
 
 def regex_converter(passed_regex):
@@ -36,6 +36,7 @@ urlpatterns = [
     path('<int:project_pk>/resolved/', issue_list, {"state_filter": "resolved"}, name="issue_list_resolved"),
     path('<int:project_pk>/muted/', issue_list, {"state_filter": "muted"}, name="issue_list_muted"),
     path('<int:project_pk>/all/', issue_list, {"state_filter": "all"}, name="issue_list_all"),
+    path('<int:project_pk>/merge/', issue_merge, name="issue_merge"),
 
     path('issue/<uuid:issue_pk>/event/<uuid:event_pk>/', issue_event_stacktrace, name="event_stacktrace"),
     path('issue/<uuid:issue_pk>/event/<uuid:event_pk>/details/', issue_event_details, name="event_details"),

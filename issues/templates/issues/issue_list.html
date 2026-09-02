@@ -39,6 +39,11 @@
 <div class="m-4">
 <h1 class="text-4xl mt-4 font-bold">{% translate "Issues" %}{% if project %} · {{ project.name }}{% endif %}</h1>
 
+{% for message in messages %}
+<div class="w-full mt-2 mb-2 p-4 border-2 {% if message.tags == 'error' %}bg-red-100 dark:bg-red-900 border-red-800 dark:border-red-700{% else %}bg-cyan-50 dark:bg-cyan-900 border-cyan-500 dark:border-cyan-700{% endif %}">
+    {{ message }}
+</div>
+{% endfor %}
 
 {% if unapplied_issue_ids %}
 <div class="bg-red-100 dark:bg-red-900 w-full mt-2 mb-2 p-4 border-red-800 dark:border-red-700 border-2">
@@ -161,6 +166,10 @@
                     <button class="font-bold text-slate-500 dark:text-slate-300 border-slate-300 dark:border-slate-600 pl-4 pr-4 pb-2 pt-2 border-r-2 border-b-2 border-t-2 hover:bg-slate-200 dark:hover:bg-slate-800 active:ring-3 rounded-e-md" name="action" value="unmute">{% translate "Unmute" %}</button>
                 {% else %}
                     <button disabled class="font-bold text-slate-300 dark:text-slate-600 border-slate-300 dark:border-slate-600 pl-4 pr-4 pb-2 pt-2 border-r-2 border-b-2 border-t-2 rounded-e-md" name="action" value="unmute">{% translate "Unmute" %}</button>
+                {% endif %}
+
+                {% if project %}
+                <button class="font-bold text-slate-500 dark:text-slate-300 border-slate-300 dark:border-slate-600 pl-4 pr-4 pb-2 pt-2 ml-1 border-2 hover:bg-slate-200 dark:hover:bg-slate-800 active:ring-3 rounded-md" name="action" value="merge">{% translate "Merge…" %}</button>
                 {% endif %}
 
                 <div class="dropdown">
