@@ -17,7 +17,7 @@ from bugsink.period_utils import add_periods_to_datetime
 from bugsink.utils import assert_
 from bugsink.volume_based_condition import VolumeBasedCondition
 from bugsink.transaction import delay_on_commit
-from alerts.tasks import send_unmute_alert
+from alerts.tasks import send_resolve_alert, send_unmute_alert
 from compat.timestamp import parse_timestamp, format_timestamp
 from tags.models import IssueTag, TagValue
 
@@ -717,16 +717,27 @@ def make_issue_history(issue_or_qs, action, user):
         ])
 
 
+def _schedule_resolve_alerts(issue_or_qs):
+    if isinstance(issue_or_qs, Issue):
+        delay_on_commit(send_resolve_alert, str(issue_or_qs.id))
+        return
+    for issue in issue_or_qs:
+        delay_on_commit(send_resolve_alert, str(issue.id))
+
+
 def apply_issue_action(manager, issue_or_qs, action, user):
     make_issue_history(issue_or_qs, action, user)
 
     if action == "resolve":
         manager.resolve(issue_or_qs)
+        _schedule_resolve_alerts(issue_or_qs)
     elif action.startswith("resolved_release:"):
         release_version = action.split(":", 1)[1]
         manager.resolve_by_release(issue_or_qs, release_version)
+        _schedule_resolve_alerts(issue_or_qs)
     elif action == "resolved_next":
         manager.resolve_by_next(issue_or_qs)
+        _schedule_resolve_alerts(issue_or_qs)
     elif action == "reopen":
         manager.reopen(issue_or_qs)
     elif action == "mute":

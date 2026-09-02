@@ -55,6 +55,9 @@ class MessagingServiceConfig(models.Model):
     alert_on_merge = models.BooleanField(
         default=False,
         help_text="Send when issues are manually merged (useful to notify GitHub only after triage)")
+    alert_on_resolve = models.BooleanField(
+        default=False,
+        help_text="Send when an issue is resolved (useful to close a linked GitHub issue)")
 
     # Alert backend failure tracking
     last_failure_timestamp = models.DateTimeField(null=True, blank=True,
@@ -75,6 +78,7 @@ class MessagingServiceConfig(models.Model):
         "REGRESSED": "alert_on_regression",
         "UNMUTED": "alert_on_unmute",
         "MERGED": "alert_on_merge",
+        "RESOLVED": "alert_on_resolve",
     }
 
     def should_send_alert(self, alert_reason):

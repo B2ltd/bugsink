@@ -78,6 +78,11 @@ def send_merge_alert(issue_id, absorbed_friendly_ids=None):
     )
 
 
+@shared_task
+def send_resolve_alert(issue_id):
+    _send_alert(issue_id, "Resolved issue", "a", "RESOLVED")
+
+
 def _send_alert(issue_id, state_description, alert_article, alert_reason, **kwargs):
     # NOTE: as it stands, there is a bit of asymmetry here: _send_alert is always called in delayed fashion; it delays
     # some work itself (message backends) though not all (emails). I kept it like this to be able to add functionality
