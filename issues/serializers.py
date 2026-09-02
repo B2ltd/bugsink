@@ -3,6 +3,7 @@ import json
 
 from django.utils import timezone
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from bugsink.api_serializers import UTCModelSerializer
 from bugsink.period_utils import DATEUTIL_KWARGS_MAP
@@ -144,6 +145,7 @@ class IssueSerializer(UTCModelSerializer):
             "external_issues",
         ]
 
+    @extend_schema_field(serializers.JSONField)
     def get_metadata(self, obj):
         return obj.parsed_metadata()
 
