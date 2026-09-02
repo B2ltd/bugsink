@@ -54,11 +54,30 @@ class CustomBackendForm(forms.Form):
     webhook_url = forms.URLField(required=True, assume_scheme="https")
     extra_headers = forms.CharField(
         required=False,
-        widget=forms.Textarea(attrs={"rows": 4, "placeholder": "Authorization: Bearer …\nX-Env: uk"}),
+        widget=forms.Textarea(attrs={
+            "rows": 4,
+            "placeholder": "Authorization: Bearer github_pat_…\nAccept: application/vnd.github+json",
+        }),
         help_text=(
             "Optional. One header per line as <code>Name: Value</code>. "
             "Use for bearer tokens / shared secrets. <code>Host</code> is reserved."
         ),
+    )
+    github_repository_dispatch = forms.BooleanField(
+        required=False,
+        initial=False,
+        help_text=(
+            "Wrap the POST body as a GitHub <code>repository_dispatch</code> payload "
+            "(<code>event_type</code> + <code>client_payload.issue</code>). "
+            "Point the URL at "
+            "<code>https://api.github.com/repos/OWNER/REPO/dispatches</code> "
+            "and set an Authorization bearer PAT in Extra headers."
+        ),
+    )
+    github_event_type = forms.CharField(
+        required=False,
+        initial="bugsink-alert",
+        help_text="repository_dispatch <code>event_type</code> when the wrap option is enabled.",
     )
 
     def __init__(self, *args, **kwargs):
@@ -68,11 +87,20 @@ class CustomBackendForm(forms.Form):
         if config:
             self.fields["webhook_url"].initial = config.get("webhook_url", "")
             self.fields["extra_headers"].initial = config.get("extra_headers", "")
+            self.fields["github_repository_dispatch"].initial = bool(
+                config.get("github_repository_dispatch"))
+            self.fields["github_event_type"].initial = config.get(
+                "github_event_type") or "bugsink-alert"
 
     def get_config(self):
         return {
             "webhook_url": self.cleaned_data.get("webhook_url"),
             "extra_headers": self.cleaned_data.get("extra_headers") or "",
+            "github_repository_dispatch": bool(
+                self.cleaned_data.get("github_repository_dispatch")),
+            "github_event_type": (
+                self.cleaned_data.get("github_event_type") or "bugsink-alert"
+            ).strip() or "bugsink-alert",
         }
 
     def clean_webhook_url(self):
@@ -149,9 +177,19 @@ def _headers_from_config(extra_headers_raw: str) -> dict[str, str]:
         return build_request_headers()
 
 
+def _maybe_wrap_github_dispatch(data: dict, *, wrap: bool, event_type: str) -> dict:
+    if not wrap:
+        return data
+    return {
+        "event_type": event_type or "bugsink-alert",
+        "client_payload": {"issue": data},
+    }
+
+
 @shared_task
 def custom_backend_send_test_message(
-    webhook_url, project_name, display_name, service_config_id, extra_headers=""
+    webhook_url, project_name, display_name, service_config_id, extra_headers="",
+    github_repository_dispatch=False, github_event_type="bugsink-alert",
 ):
     data = {
         "id": "497f6eca-6276-4993-bfeb-53cbbbba6f08",
@@ -175,10 +213,13 @@ def custom_backend_send_test_message(
         "alert_reason": "TEST",
     }
 
+    payload = _maybe_wrap_github_dispatch(
+        data, wrap=bool(github_repository_dispatch), event_type=github_event_type)
+
     try:
         result = CustomBackend.safe_post(
             webhook_url,
-            data=json.dumps(data),
+            data=json.dumps(payload),
             headers=_headers_from_config(extra_headers),
         )
 
@@ -204,6 +245,8 @@ def custom_backend_send_alert(
     unmute_reason=None,
     extra_headers="",
     absorbed_friendly_ids=None,
+    github_repository_dispatch=False,
+    github_event_type="bugsink-alert",
 ):
     issue = Issue.objects.get(id=issue_id)
 
@@ -222,10 +265,13 @@ def custom_backend_send_alert(
     if absorbed_friendly_ids:
         data["absorbed_friendly_ids"] = list(absorbed_friendly_ids)
 
+    payload = _maybe_wrap_github_dispatch(
+        data, wrap=bool(github_repository_dispatch), event_type=github_event_type)
+
     try:
         result = CustomBackend.safe_post(
             webhook_url,
-            data=json.dumps(data),
+            data=json.dumps(payload),
             headers=_headers_from_config(extra_headers),
         )
 
@@ -256,6 +302,8 @@ class CustomBackend(BaseWebhookBackend):
             self.service_config.display_name,
             self.service_config.id,
             config.get("extra_headers", ""),
+            bool(config.get("github_repository_dispatch")),
+            config.get("github_event_type") or "bugsink-alert",
         )
 
     def send_alert(self, issue_id, state_description, alert_article, alert_reason, **kwargs):
@@ -270,4 +318,6 @@ class CustomBackend(BaseWebhookBackend):
             unmute_reason=kwargs.get("unmute_reason"),
             extra_headers=config.get("extra_headers", ""),
             absorbed_friendly_ids=kwargs.get("absorbed_friendly_ids"),
+            github_repository_dispatch=bool(config.get("github_repository_dispatch")),
+            github_event_type=config.get("github_event_type") or "bugsink-alert",
         )

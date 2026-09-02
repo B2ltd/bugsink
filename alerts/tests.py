@@ -1388,6 +1388,15 @@ class TestWebhookConfigForms(DjangoTestCase):
         raw = "# comment\n\nAuthorization: Bearer x\n"
         self.assertEqual(parse_extra_headers(raw), {"Authorization": "Bearer x"})
 
+    def test_wrap_github_repository_dispatch(self):
+        from alerts.service_backends.custom import _maybe_wrap_github_dispatch
+        issue = {"id": "abc", "title": "t"}
+        self.assertEqual(_maybe_wrap_github_dispatch(issue, wrap=False, event_type="x"), issue)
+        wrapped = _maybe_wrap_github_dispatch(issue, wrap=True, event_type="bugsink-alert")
+        self.assertEqual(wrapped["event_type"], "bugsink-alert")
+        self.assertEqual(wrapped["client_payload"]["issue"], issue)
+
+
     def test_build_request_headers_merges_content_type(self):
         headers = build_request_headers({"Authorization": "Bearer x"})
         self.assertEqual(headers["Content-Type"], "application/json")
