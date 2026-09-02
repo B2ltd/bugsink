@@ -291,5 +291,5 @@ class TelegramBackend(BaseWebhookBackend):
             alert_reason,
             self.service_config.id,
             message_thread_id=config.get("message_thread_id"),
-            **kwargs,
+            unmute_reason=kwargs.get("unmute_reason"),
         )

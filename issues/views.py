@@ -17,6 +17,8 @@ from django.utils.functional import cached_property
 from sentry.at_glitchtip_af9a700a8706.utils.safe import get_path
 from sentry_sdk_extensions import capture_or_log_exception
 
+from django.contrib import messages
+from django.utils.translation import gettext as _
 from bugsink.decorators import project_membership_required, issue_membership_required, atomic_for_request_method
 from bugsink.transaction import durable_atomic
 from bugsink.timed_sqlite_backend.base import different_runtime_limit
@@ -148,6 +150,9 @@ def issue_list(request, project_pk, state_filter="open"):
     # which take in the order of 5ms / 120ms respectively. Some info is passed between transactions (project and
     # unapplied_issue_ids), but since this is respectively sensitive to much change and the direct result of our own
     # current action, I don't think this can lead to surprising results.
+
+    if request.method == "POST" and request.POST.get("action") == "merge":
+        return issue_merge(request, project_pk=project_pk)
 
     project, unapplied_issue_ids = _issue_list_pt_1(request, project_pk=project_pk, state_filter=state_filter)
     with durable_atomic():
@@ -863,5 +868,54 @@ def history_comment_delete(request, issue, comment_pk):
     if request.method == "POST":
         comment.delete()
         return redirect(reverse(issue_history, kwargs={'issue_pk': issue.pk}))
+
+    return HttpResponseNotAllowed(["POST"])
+
+
+@atomic_for_request_method
+@project_membership_required
+def issue_merge(request, project):
+    """Confirm and kick off a manual merge of selected issues into a chosen winner."""
+    from .merge import kickoff_merge
+
+    if request.method == "POST" and request.POST.get("action") == "merge":
+        # Arrived from the issue list bulk form — show the winner picker.
+        issue_ids = request.POST.getlist("issue_ids[]")
+        issues = list(
+            Issue.objects.filter(project=project, is_deleted=False, pk__in=issue_ids).order_by("-last_seen")
+        )
+        if len(issues) < 2:
+            messages.error(request, _("Select at least two issues to merge."))
+            return redirect(reverse("issue_list_open", kwargs={"project_pk": project.pk}))
+
+        return render(request, "issues/issue_merge.html", {
+            "project": project,
+            "issues": issues,
+            "default_winner_id": str(issues[0].id),
+        })
+
+    if request.method == "POST" and request.POST.get("action") == "confirm_merge":
+        winner_id = request.POST.get("winner_id")
+        issue_ids = request.POST.getlist("issue_ids[]")
+        issues = list(Issue.objects.filter(project=project, is_deleted=False, pk__in=issue_ids))
+        issues_by_id = {str(issue.id): issue for issue in issues}
+        winner = issues_by_id.get(winner_id)
+        if winner is None or len(issues) < 2:
+            messages.error(request, _("Invalid merge selection."))
+            return redirect(reverse("issue_list_open", kwargs={"project_pk": project.pk}))
+
+        losers = [issue for issue in issues if issue.id != winner.id]
+        try:
+            kickoff_merge(winner, losers, user=request.user)
+        except Exception as exc:
+            messages.error(request, str(exc))
+            return redirect(reverse("issue_list_open", kwargs={"project_pk": project.pk}))
+
+        messages.success(
+            request,
+            _("Merging %(count)d issue(s) into %(winner)s. This may take a moment.")
+            % {"count": len(losers), "winner": winner.friendly_id()},
+        )
+        return redirect(reverse("issue_list_open", kwargs={"project_pk": project.pk}))
 
     return HttpResponseNotAllowed(["POST"])
