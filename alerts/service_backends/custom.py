@@ -1,4 +1,5 @@
 import json
+import re
 
 import requests
 from django import forms
@@ -13,9 +14,52 @@ from snappea.decorators import shared_task
 from .base import BaseWebhookBackend
 from .webhook_security import validate_webhook_url
 
+# Headers that safe_post / the pinned adapter own; callers must not set them.
+_RESERVED_HEADER_NAMES = frozenset({"host"})
+
+_HEADER_LINE_RE = re.compile(r"^([^:\s][^:]*):\s*(.*)$")
+
+
+def parse_extra_headers(raw: str) -> dict[str, str]:
+    """Parse 'Name: Value' lines into a header dict. Blank lines and '# …' comments are ignored."""
+    if not raw or not raw.strip():
+        return {}
+
+    headers: dict[str, str] = {}
+    for line_no, line in enumerate(raw.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _HEADER_LINE_RE.match(stripped)
+        if not match:
+            raise ValueError(f"Invalid header on line {line_no} (expected 'Name: Value'): {stripped!r}")
+        name, value = match.group(1).strip(), match.group(2).strip()
+        if name.lower() in _RESERVED_HEADER_NAMES:
+            raise ValueError(f"Header {name!r} is reserved and cannot be set")
+        if not name:
+            raise ValueError(f"Empty header name on line {line_no}")
+        headers[name] = value
+    return headers
+
+
+def build_request_headers(extra_headers: dict[str, str] | None = None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if extra_headers:
+        # Caller-supplied headers win except we always send JSON unless they override Content-Type.
+        headers.update(extra_headers)
+    return headers
+
 
 class CustomBackendForm(forms.Form):
     webhook_url = forms.URLField(required=True, assume_scheme="https")
+    extra_headers = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 4, "placeholder": "Authorization: Bearer …\nX-Env: uk"}),
+        help_text=(
+            "Optional. One header per line as <code>Name: Value</code>. "
+            "Use for bearer tokens / shared secrets. <code>Host</code> is reserved."
+        ),
+    )
 
     def __init__(self, *args, **kwargs):
         config = kwargs.pop("config", None)
@@ -23,10 +67,12 @@ class CustomBackendForm(forms.Form):
         super().__init__(*args, **kwargs)
         if config:
             self.fields["webhook_url"].initial = config.get("webhook_url", "")
+            self.fields["extra_headers"].initial = config.get("extra_headers", "")
 
     def get_config(self):
         return {
             "webhook_url": self.cleaned_data.get("webhook_url"),
+            "extra_headers": self.cleaned_data.get("extra_headers") or "",
         }
 
     def clean_webhook_url(self):
@@ -36,6 +82,14 @@ class CustomBackendForm(forms.Form):
         except ValueError as e:
             raise forms.ValidationError(str(e)) from e
         return webhook_url
+
+    def clean_extra_headers(self):
+        raw = self.cleaned_data.get("extra_headers") or ""
+        try:
+            parse_extra_headers(raw)
+        except ValueError as e:
+            raise forms.ValidationError(str(e)) from e
+        return raw
 
 
 def _store_failure_info(service_config_id, exception, response=None):
@@ -87,8 +141,18 @@ def _store_success_info(service_config_id):
             pass
 
 
+def _headers_from_config(extra_headers_raw: str) -> dict[str, str]:
+    try:
+        return build_request_headers(parse_extra_headers(extra_headers_raw or ""))
+    except ValueError:
+        # Config was valid when saved; if somehow corrupted, still send Content-Type only.
+        return build_request_headers()
+
+
 @shared_task
-def custom_backend_send_test_message(webhook_url, project_name, display_name, service_config_id):
+def custom_backend_send_test_message(
+    webhook_url, project_name, display_name, service_config_id, extra_headers=""
+):
     data = {
         "id": "497f6eca-6276-4993-bfeb-53cbbbba6f08",
         "friendly_id": "TEST-1",
@@ -115,7 +179,7 @@ def custom_backend_send_test_message(webhook_url, project_name, display_name, se
         result = CustomBackend.safe_post(
             webhook_url,
             data=json.dumps(data),
-            headers={"Content-Type": "application/json"},
+            headers=_headers_from_config(extra_headers),
         )
 
         result.raise_for_status()
@@ -131,7 +195,14 @@ def custom_backend_send_test_message(webhook_url, project_name, display_name, se
 
 @shared_task
 def custom_backend_send_alert(
-    webhook_url, issue_id, state_description, alert_article, alert_reason, service_config_id, unmute_reason=None
+    webhook_url,
+    issue_id,
+    state_description,
+    alert_article,
+    alert_reason,
+    service_config_id,
+    unmute_reason=None,
+    extra_headers="",
 ):
     issue = Issue.objects.get(id=issue_id)
 
@@ -151,7 +222,7 @@ def custom_backend_send_alert(
         result = CustomBackend.safe_post(
             webhook_url,
             data=json.dumps(data),
-            headers={"Content-Type": "application/json"},
+            headers=_headers_from_config(extra_headers),
         )
 
         result.raise_for_status()
@@ -180,6 +251,7 @@ class CustomBackend(BaseWebhookBackend):
             self.service_config.project.name,
             self.service_config.display_name,
             self.service_config.id,
+            config.get("extra_headers", ""),
         )
 
     def send_alert(self, issue_id, state_description, alert_article, alert_reason, **kwargs):
@@ -191,5 +263,6 @@ class CustomBackend(BaseWebhookBackend):
             alert_article,
             alert_reason,
             self.service_config.id,
+            extra_headers=config.get("extra_headers", ""),
             **kwargs,
         )
