@@ -1,4 +1,5 @@
 import datetime
+import json
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -6,12 +7,108 @@ from rest_framework import serializers
 from bugsink.api_serializers import UTCModelSerializer
 from bugsink.period_utils import DATEUTIL_KWARGS_MAP
 
-from .models import Issue, TurningPoint, TurningPointKind, issue_lookup_kwargs
+from .models import ExternalIssue, Issue, TurningPoint, TurningPointKind, issue_lookup_kwargs
+
+
+class ExternalIssueSerializer(UTCModelSerializer):
+    """Sentry-shaped external issue: webUrl / project / identifier (+ provider, metadata)."""
+
+    webUrl = serializers.URLField(source="web_url")
+    project = serializers.CharField(source="external_project", allow_blank=True, required=False, default="")
+    displayName = serializers.CharField(source="display_name", allow_blank=True, required=False, default="")
+    metadata = serializers.JSONField(required=False, default=dict)
+    issue = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = ExternalIssue
+        fields = [
+            "id",
+            "issue",
+            "provider",
+            "webUrl",
+            "project",
+            "identifier",
+            "displayName",
+            "metadata",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["metadata"] = instance.parsed_metadata()
+        data["displayName"] = instance.get_display_name()
+        data["issue"] = str(instance.issue_id)
+        return data
+
+    def validate_metadata(self, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be a JSON object.")
+        return value
+
+    def _resolve_issue(self, issue_ref):
+        if isinstance(issue_ref, Issue):
+            return issue_ref
+        try:
+            return Issue.objects.filter(is_deleted=False).select_related("project").get(
+                **issue_lookup_kwargs(str(issue_ref)))
+        except Issue.DoesNotExist as exc:
+            raise serializers.ValidationError({"issue": "Issue not found."}) from exc
+
+    def create(self, validated_data):
+        issue_ref = validated_data.pop("issue", None)
+        if issue_ref is None:
+            raise serializers.ValidationError({"issue": "This field is required."})
+        issue = self._resolve_issue(issue_ref)
+        metadata = validated_data.pop("metadata", {})
+        return ExternalIssue.objects.create(
+            project=issue.project,
+            issue=issue,
+            metadata=json.dumps(metadata),
+            **validated_data,
+        )
+
+    def update(self, instance, validated_data):
+        validated_data.pop("issue", None)
+        metadata = validated_data.pop("metadata", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if metadata is not None:
+            instance.metadata = json.dumps(metadata)
+            if hasattr(instance, "_parsed_metadata"):
+                del instance._parsed_metadata
+        instance.save()
+        return instance
+
+
+class IssueMergeSerializer(serializers.Serializer):
+    """Sentry-like merge body: children absorbed into the path issue (parent)."""
+
+    children = serializers.ListField(
+        child=serializers.CharField(),
+        allow_empty=False,
+        help_text="Issue UUIDs or friendly IDs to absorb into the parent.",
+    )
+
+
+class IssueMetadataSerializer(serializers.Serializer):
+    metadata = serializers.JSONField()
+    merge = serializers.BooleanField(default=True, required=False)
+
+    def validate_metadata(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Must be a JSON object.")
+        return value
 
 
 class IssueSerializer(UTCModelSerializer):
     # grouping_keys = serializers.SerializerMethodField()  # read-only list of strings
     friendly_id = serializers.CharField(read_only=True)
+    metadata = serializers.SerializerMethodField()
+    external_issues = ExternalIssueSerializer(many=True, read_only=True)
 
     class Meta:
         model = Issue
@@ -43,11 +140,12 @@ class IssueSerializer(UTCModelSerializer):
             "is_muted",
             # "unmute_on_volume_based_conditions",  too "raw"? i.e. too implementation-tied?
             # "grouping_keys",  TODO (likely) once we have the "expand" idea implemented
+            "metadata",
+            "external_issues",
         ]
 
-    # def get_grouping_keys(self, obj):
-    #     # TODO: prefetch grouping_key in IssueViewSet
-    #     return list(obj.grouping_set.values_list("grouping_key", flat=True))
+    def get_metadata(self, obj):
+        return obj.parsed_metadata()
 
 
 class IssueMuteForSerializer(serializers.Serializer):

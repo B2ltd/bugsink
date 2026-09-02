@@ -4,7 +4,7 @@ from bugsink.transaction import immediate_atomic
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 
-from .models import Issue, Grouping, TurningPoint
+from .models import Issue, Grouping, TurningPoint, ExternalIssue
 from .forms import IssueAdminForm
 
 csrf_protect_m = method_decorator(csrf_protect)
@@ -17,6 +17,20 @@ class GroupingInline(admin.TabularInline):
     readonly_fields = [
         'grouping_key',
         'grouping_mechanism',
+    ]
+
+
+class ExternalIssueInline(admin.TabularInline):
+    model = ExternalIssue
+    extra = 0
+    exclude = ['project']
+    fields = [
+        "provider",
+        "external_project",
+        "identifier",
+        "web_url",
+        "display_name",
+        "metadata",
     ]
 
 
@@ -59,10 +73,12 @@ class IssueAdmin(admin.ModelAdmin):
         'unmute_after',
         'digested_event_count',
         'stored_event_count',
+        'metadata',
     ]
 
     inlines = [
         GroupingInline,
+        ExternalIssueInline,
         TurningPointInline,
     ]
 
