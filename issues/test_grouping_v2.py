@@ -114,6 +114,18 @@ class GroupingV2TestCase(DjangoTestCase):
                 "bad header on Tue, 03 Jan 2006 16:05:06 GMT",
                 "<date>",
             ),
+            (
+                "Error",
+                "Failed to find configured root that contains /storage/emulated/0/Download/15k0wa0cf.jpg",
+                "Failed to find configured root that contains /storage/emulated/0/Download/otherfile.png",
+                "<path>",
+            ),
+            (
+                "IOError",
+                r"cannot open C:\Users\alice\AppData\Local\Temp\abc.tmp",
+                r"cannot open C:\Users\bob\AppData\Local\Temp\xyz.tmp",
+                "<winpath>",
+            ),
         ]
 
         for exception_type, first_value, second_value, expected_placeholder in cases:

@@ -28,6 +28,8 @@ def normalize_message_for_grouping(message: str) -> str:
         regex_pattern_keys=(
             "email",
             "url",
+            "path",
+            "winpath",
             "hostname",
             "ip",
             "uuid",

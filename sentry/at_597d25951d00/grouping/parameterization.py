@@ -58,6 +58,18 @@ DEFAULT_PARAMETERIZATION_REGEXES = [
         raw_pattern=r"""[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*""",
     ),
     ParameterizationRegex(name="url", raw_pattern=r"""\b(wss?|https?|ftp)://[^\s/$.?#].[^\s]*"""),
+    # Absolute filesystem paths (Unix/Android/iOS). Matched before int so
+    # "/storage/emulated/0/Download/foo.jpg" becomes "<path>" instead of
+    # partially collapsing only the "0".
+    ParameterizationRegex(
+        name="path",
+        raw_pattern=r"""(?:/(?:[\w.$@+-]+)){2,}""",
+    ),
+    # Windows paths: C:\Users\…\file.jpg
+    ParameterizationRegex(
+        name="winpath",
+        raw_pattern=r"""[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]+""",
+    ),
     ParameterizationRegex(
         name="hostname",
         raw_pattern=r"""
