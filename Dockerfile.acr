@@ -1,0 +1,45 @@
+# ACR-compatible build (no BuildKit --mount). Same end image as Dockerfile.
+ARG PYTHON_VERSION=3.12
+
+FROM python:${PYTHON_VERSION} AS build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends default-libmysqlclient-dev build-essential pkg-config \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip wheel --wheel-dir /wheels mysqlclient
+
+FROM python:${PYTHON_VERSION}-slim
+
+ARG BUGSINK_VERSION=0.0.0+b2
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${BUGSINK_VERSION}
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends libmariadb3 binutils \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /wheels /wheels
+COPY requirements.txt /tmp/requirements.txt
+COPY . /app/
+COPY bugsink/conf_templates/docker.py.template bugsink_conf.py
+
+RUN pip install --find-links /wheels --no-index mysqlclient \
+ && pip install "psycopg[binary]" \
+ && pip install -r /tmp/requirements.txt \
+ && pip install -e . \
+ && find /usr/local/lib/python3.12/site-packages -name '*.so' -exec strip --strip-unneeded {} + \
+ && apt-get purge -y binutils && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/* /wheels
+
+RUN groupadd --gid 14237 bugsink \
+ && useradd --uid 14237 --gid 14237 bugsink \
+ && mkdir -p /data \
+ && chown -R bugsink:bugsink /data
+
+USER bugsink
+
+HEALTHCHECK CMD python -c 'import requests; requests.get("http://localhost:8000/health/ready").raise_for_status()'
+
+CMD [ "monofy", "bugsink-show-version", "&&", "bugsink-manage", "check", "--deploy", "--fail-level", "WARNING", "&&", "bugsink-manage", "migrate", "snappea", "--database=snappea", "&&", "bugsink-manage", "migrate", "&&", "bugsink-manage", "prestart", "&&", "gunicorn", "--config", "bugsink/gunicorn.docker.conf.py", "--bind=0.0.0.0:$PORT", "--access-logfile", "-", "bugsink.wsgi", "|||", "bugsink-runsnappea"]
