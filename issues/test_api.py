@@ -466,3 +466,82 @@ class IssuePaginationTests(TransactionTestCase):
             self._ids(r2),
             [str(self._idx_by_event_count(issues, 3)), str(self._idx_by_event_count(issues, 2))],
         )
+
+
+class IssueMergeAndExternalApiTests(TransactionTestCase):
+    def setUp(self):
+        self.client = APIClient()
+        token = AuthToken.objects.create()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token.token}")
+        self.project = Project.objects.create(name="Merge API", issue_count=2)
+        self.parent, _ = get_or_create_issue(self.project, create_event_data(exception_type="ParentErr"))
+        self.child, _ = get_or_create_issue(self.project, create_event_data(exception_type="ChildErr"))
+        create_event(self.project, self.parent, project_digest_order=1)
+        create_event(self.project, self.child, project_digest_order=2)
+
+    def test_merge_api(self):
+        response = self.client.post(
+            reverse("api:issue-merge", args=[self.parent.id]),
+            {"children": [str(self.child.id)]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 202)
+        body = response.json()
+        self.assertEqual(body["merge"]["parent"], str(self.parent.id))
+        self.assertEqual(body["merge"]["children"], [str(self.child.id)])
+        self.assertFalse(Issue.objects.filter(id=self.child.id).exists())
+
+    def test_metadata_patch(self):
+        response = self.client.patch(
+            reverse("api:issue-update-metadata", args=[self.parent.id]),
+            {"metadata": {"github_synced": True, "note": "triaged"}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["metadata"]["note"], "triaged")
+
+        response = self.client.patch(
+            reverse("api:issue-update-metadata", args=[self.parent.id]),
+            {"metadata": {"note": "updated"}, "merge": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        meta = response.json()["metadata"]
+        self.assertTrue(meta["github_synced"])
+        self.assertEqual(meta["note"], "updated")
+
+    def test_external_issue_crud(self):
+        create = self.client.post(
+            reverse("api:issue-external-issue-list"),
+            {
+                "issue": str(self.parent.id),
+                "provider": "github",
+                "webUrl": "https://github.com/B2ltd/infrastructure/issues/42",
+                "project": "infrastructure",
+                "identifier": "42",
+                "metadata": {"env": "uk"},
+            },
+            format="json",
+        )
+        self.assertEqual(create.status_code, 201, create.content)
+        ext_id = create.json()["id"]
+        self.assertEqual(create.json()["webUrl"], "https://github.com/B2ltd/infrastructure/issues/42")
+        self.assertEqual(create.json()["displayName"], "infrastructure#42")
+
+        listed = self.client.get(reverse("api:issue-external-issue-list"), {"issue": str(self.parent.id)})
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()["results"]), 1)
+
+        detail = self.client.get(reverse("api:issue-detail", args=[self.parent.id]))
+        self.assertEqual(len(detail.json()["external_issues"]), 1)
+
+        patched = self.client.patch(
+            reverse("api:issue-external-issue-detail", args=[ext_id]),
+            {"displayName": "GH#42"},
+            format="json",
+        )
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["displayName"], "GH#42")
+
+        deleted = self.client.delete(reverse("api:issue-external-issue-detail", args=[ext_id]))
+        self.assertEqual(deleted.status_code, 204)

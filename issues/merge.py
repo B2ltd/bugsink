@@ -110,6 +110,32 @@ def _merge_hourly_counts(winner_id, loser_ids):
         row.delete()
 
 
+def _merge_external_issues(winner_id, loser_ids):
+    from issues.models import ExternalIssue
+
+    for link in ExternalIssue.objects.filter(issue_id__in=loser_ids):
+        clash = ExternalIssue.objects.filter(
+            issue_id=winner_id, provider=link.provider, identifier=link.identifier).exists()
+        if clash:
+            link.delete()
+            continue
+        link.issue_id = winner_id
+        link.save(update_fields=["issue_id"])
+
+
+def _merge_issue_metadata(winner, losers):
+    merged = dict(winner.parsed_metadata())
+    changed = False
+    for loser in losers:
+        for key, value in loser.parsed_metadata().items():
+            if key not in merged:
+                merged[key] = value
+                changed = True
+    if changed:
+        winner.set_metadata(merged, merge=False)
+        winner.save(update_fields=["metadata"])
+
+
 def finalize_merge(winner_id, loser_ids, user_id, absorbed_friendly_ids):
     from alerts.tasks import send_merge_alert
     from events.models import Event
@@ -135,6 +161,8 @@ def finalize_merge(winner_id, loser_ids, user_id, absorbed_friendly_ids):
 
         _merge_issue_tags(winner_id, loser_ids)
         _merge_hourly_counts(winner_id, loser_ids)
+        _merge_external_issues(winner_id, loser_ids)
+        _merge_issue_metadata(winner, losers)
 
         Grouping.objects.filter(issue_id__in=loser_ids).update(issue_id=winner_id)
         TurningPoint.objects.filter(issue_id__in=loser_ids).update(issue_id=winner_id)
