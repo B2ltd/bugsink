@@ -32,7 +32,13 @@ from .service_backends.telegram import (
     telegram_backend_send_alert,
     telegram_backend_send_test_message,
 )
-from .service_backends.custom import CustomBackendForm, custom_backend_send_test_message, custom_backend_send_alert
+from .service_backends.custom import (
+    CustomBackendForm,
+    custom_backend_send_test_message,
+    custom_backend_send_alert,
+    parse_extra_headers,
+    build_request_headers,
+)
 from .service_backends.webhook_security import _embedded_ipv4_addresses, validate_webhook_url
 from .tasks import send_new_issue_alert, send_regression_alert, send_unmute_alert, _get_users_for_email_alert
 from .views import DEBUG_CONTEXTS
@@ -749,6 +755,25 @@ class TestCustomBackendErrorHandling(DjangoTestCase):
         self.assertIsNone(self.config.last_failure_response_text)
 
     @patch('alerts.service_backends.base.BaseWebhookBackend.safe_post')
+    def test_custom_test_message_sends_extra_headers(self, mock_post):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+
+        custom_backend_send_test_message(
+            "https://hooks.example.com/test",
+            "Test project",
+            "Test Custom",
+            self.config.id,
+            extra_headers="Authorization: Bearer secret",
+        )
+
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret")
+        self.assertEqual(kwargs["headers"]["Content-Type"], "application/json")
+
+    @patch('alerts.service_backends.base.BaseWebhookBackend.safe_post')
     def test_custom_test_message_http_error_stores_failure(self, mock_post):
         # Mock HTTP error response
         mock_response = Mock()
@@ -1264,3 +1289,41 @@ class TestWebhookConfigForms(DjangoTestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("non-global IP address", form.errors["webhook_url"][0])
+
+    @patch("alerts.service_backends.webhook_security._resolve_ip_addresses")
+    def test_custom_form_accepts_extra_headers(self, mock_resolve):
+        mock_resolve.return_value = {"93.184.216.34"}
+        form = CustomBackendForm(
+            data={
+                "webhook_url": "https://hooks.example.com/webhook",
+                "extra_headers": "Authorization: Bearer secret\nX-Env: uk",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(
+            form.get_config()["extra_headers"],
+            "Authorization: Bearer secret\nX-Env: uk",
+        )
+
+    @patch("alerts.service_backends.webhook_security._resolve_ip_addresses")
+    def test_custom_form_rejects_reserved_host_header(self, mock_resolve):
+        mock_resolve.return_value = {"93.184.216.34"}
+        form = CustomBackendForm(
+            data={
+                "webhook_url": "https://hooks.example.com/webhook",
+                "extra_headers": "Host: evil.example",
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("reserved", form.errors["extra_headers"][0])
+
+    def test_parse_extra_headers_ignores_comments_and_blanks(self):
+        raw = "# comment\n\nAuthorization: Bearer x\n"
+        self.assertEqual(parse_extra_headers(raw), {"Authorization": "Bearer x"})
+
+    def test_build_request_headers_merges_content_type(self):
+        headers = build_request_headers({"Authorization": "Bearer x"})
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertEqual(headers["Authorization"], "Bearer x")
