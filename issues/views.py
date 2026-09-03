@@ -330,8 +330,31 @@ def event_by_id(request, event_pk):
 
 
 def _handle_post(request, issue):
-    if is_valid_issue_action(request.POST["action"], issue):
-        apply_issue_action(IssueStateManager, issue, request.POST["action"], request.user)
+    action = request.POST.get("action", "")
+    if action == "notify_service":
+        from alerts.models import MessagingServiceConfig
+        from alerts.tasks import send_manual_service_alert
+
+        if issue.has_github_external_issue():
+            messages.error(request, _("This issue already has a GitHub link."))
+            return HttpResponseRedirect(request.path)
+
+        service_id = request.POST.get("service_id")
+        try:
+            service = issue.project.service_configs.get(pk=service_id)
+        except (MessagingServiceConfig.DoesNotExist, ValueError, TypeError):
+            messages.error(request, _("Unknown messaging service."))
+            return HttpResponseRedirect(request.path)
+
+        send_manual_service_alert.delay(str(issue.id), service.id)
+        messages.success(
+            request,
+            _("Alert queued for “%(name)s”.") % {"name": service.display_name},
+        )
+        return HttpResponseRedirect(request.path)
+
+    if action and is_valid_issue_action(action, issue):
+        apply_issue_action(IssueStateManager, issue, action, request.user)
         issue.save()
 
     # note that if the action is not valid, we just ignore it (i.e. we don't show any error message or anything)

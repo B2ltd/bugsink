@@ -233,6 +233,19 @@ class TestAlertTriggerFilters(DjangoTestCase):
 
         backend.send_alert.assert_not_called()
 
+    @patch.object(MessagingServiceConfig, "get_backend")
+    def test_send_manual_service_alert_bypasses_flags(self, mock_get_backend):
+        from alerts.tasks import send_manual_service_alert
+
+        backend = Mock()
+        mock_get_backend.return_value = backend
+        service = self._service(alert_on_merge=False)
+
+        send_manual_service_alert(self.issue.id, service.id)
+
+        backend.send_alert.assert_called_once()
+        self.assertEqual(backend.send_alert.call_args.args[3], "MERGED")
+
 
 class TestSlackBackendErrorHandling(DjangoTestCase):
     def setUp(self):

@@ -83,6 +83,26 @@ def send_resolve_alert(issue_id):
     _send_alert(issue_id, "Resolved issue", "a", "RESOLVED")
 
 
+@shared_task
+def send_manual_service_alert(issue_id, service_config_id, alert_reason="MERGED"):
+    """Fire one messaging service for an issue, ignoring that service's alert_on_* flags.
+
+    Used from the issue UI when there is no GitHub external issue yet (e.g. to create one).
+    Default reason is MERGED so merge-first GitHub webhooks still create a Bug issue.
+    """
+    from alerts.models import MessagingServiceConfig
+    from issues.models import Issue
+
+    issue = Issue.objects.get(id=issue_id)
+    service = MessagingServiceConfig.objects.get(id=service_config_id, project_id=issue.project_id)
+    service.get_backend().send_alert(
+        issue_id,
+        "Manual alert",
+        "a",
+        alert_reason,
+    )
+
+
 def _send_alert(issue_id, state_description, alert_article, alert_reason, **kwargs):
     # NOTE: as it stands, there is a bit of asymmetry here: _send_alert is always called in delayed fashion; it delays
     # some work itself (message backends) though not all (emails). I kept it like this to be able to add functionality
