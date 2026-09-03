@@ -121,6 +121,9 @@ class Issue(models.Model):
     def friendly_id(self):
         return f"{ self.project.slug.upper() }-{ self.digest_order }"
 
+    def has_github_external_issue(self):
+        return self.external_issues.filter(provider="github").exists()
+
     def get_absolute_url(self):
         return f"/issues/issue/{ self.id }/event/last/"
 
