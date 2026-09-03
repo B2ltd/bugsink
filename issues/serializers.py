@@ -105,6 +105,21 @@ class IssueMetadataSerializer(serializers.Serializer):
         return value
 
 
+class IssueNotifySerializer(serializers.Serializer):
+    """Manually fire one or more messaging services for this issue."""
+
+    service_id = serializers.IntegerField(
+        required=False,
+        help_text="MessagingServiceConfig id. If omitted, all services that accept alert_reason are used.",
+    )
+    alert_reason = serializers.ChoiceField(
+        choices=["NEW", "REGRESSED", "UNMUTED", "MERGED", "RESOLVED"],
+        default="MERGED",
+        required=False,
+        help_text="Payload alert_reason (default MERGED — opens a GitHub Bug via the merge-first webhook).",
+    )
+
+
 class IssueSerializer(UTCModelSerializer):
     # grouping_keys = serializers.SerializerMethodField()  # read-only list of strings
     friendly_id = serializers.CharField(read_only=True)

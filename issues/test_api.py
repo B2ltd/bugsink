@@ -1,6 +1,7 @@
 from bugsink.test_utils import TransactionTestCase25251 as TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
+from unittest.mock import patch
 
 from rest_framework.test import APIClient
 
@@ -545,3 +546,32 @@ class IssueMergeAndExternalApiTests(TransactionTestCase):
 
         deleted = self.client.delete(reverse("api:issue-external-issue-detail", args=[ext_id]))
         self.assertEqual(deleted.status_code, 204)
+
+    @patch("alerts.tasks.send_manual_service_alert.delay")
+    def test_notify_api_queues_merge_enabled_services(self, mock_delay):
+        import json
+        from alerts.models import MessagingServiceConfig
+
+        MessagingServiceConfig.objects.create(
+            project=self.project,
+            display_name="GitHub Issues",
+            kind="custom",
+            config=json.dumps({"webhook_url": "https://example.com/hook"}),
+            alert_on_merge=True,
+        )
+        MessagingServiceConfig.objects.create(
+            project=self.project,
+            display_name="Slack",
+            kind="slack",
+            config=json.dumps({"webhook_url": "https://hooks.slack.com/x"}),
+            alert_on_merge=False,
+        )
+
+        response = self.client.post(reverse("api:issue-notify", args=[self.parent.id]), {}, format="json")
+        self.assertEqual(response.status_code, 202, response.content)
+        body = response.json()
+        self.assertEqual(body["alert_reason"], "MERGED")
+        self.assertEqual(len(body["queued"]), 1)
+        self.assertEqual(body["queued"][0]["display_name"], "GitHub Issues")
+        mock_delay.assert_called_once()
+        self.assertEqual(mock_delay.call_args.args[2], "MERGED")

@@ -18,6 +18,7 @@ from .serializers import (
     IssueMetadataSerializer,
     IssueMuteForSerializer,
     IssueMuteUntilSerializer,
+    IssueNotifySerializer,
     IssueSerializer,
 )
 
@@ -332,6 +333,57 @@ class IssueViewSet(AtomicRequestMixin, viewsets.ReadOnlyModelViewSet):
             "children": [str(child.id) for child in children],
         }
         return Response(data, status=status.HTTP_202_ACCEPTED)
+
+    @extend_schema(
+        summary="Notify messaging services for an issue",
+        description=(
+            "Queue alert(s) for this issue. With `service_id`, that service is always used "
+            "(ignores alert_on_* flags). Without it, every project service that accepts "
+            "`alert_reason` is used. Default reason is MERGED so the GitHub Issues webhook "
+            "creates a Bug when none is linked yet."
+        ),
+        request=IssueNotifySerializer,
+        responses={202: OpenApiTypes.OBJECT},
+    )
+    @action(detail=True, methods=["post"])
+    def notify(self, request, pk=None):
+        from alerts.models import MessagingServiceConfig
+        from alerts.tasks import send_manual_service_alert
+
+        issue = self.get_object()
+        serializer = IssueNotifySerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        alert_reason = serializer.validated_data.get("alert_reason") or "MERGED"
+        service_id = serializer.validated_data.get("service_id")
+
+        if service_id is not None:
+            try:
+                services = [issue.project.service_configs.get(pk=service_id)]
+            except MessagingServiceConfig.DoesNotExist as exc:
+                raise ValidationError({"service_id": ["Unknown messaging service for this project."]}) from exc
+        else:
+            services = [
+                s for s in issue.project.service_configs.all()
+                if s.should_send_alert(alert_reason)
+            ]
+            if not services:
+                raise ValidationError({
+                    "detail": f"No messaging services accept alert_reason={alert_reason}.",
+                })
+
+        queued = []
+        for service in services:
+            send_manual_service_alert.delay(str(issue.id), service.id, alert_reason)
+            queued.append({"service_id": service.id, "display_name": service.display_name, "kind": service.kind})
+
+        return Response(
+            {
+                "issue": str(issue.id),
+                "alert_reason": alert_reason,
+                "queued": queued,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @extend_schema(
         summary="Update issue metadata",
